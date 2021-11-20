@@ -9,6 +9,7 @@ var powered = [true];
 var nlDur = 60, nlTar = 0;
 var nlMode = false;
 var selectedFx = 0;
+var selectedPal = 0;
 var csel = 0;
 var currentPreset = -1;
 var lastUpdate = 0;
@@ -18,6 +19,7 @@ var tr = 7;
 var d = document;
 const ranges = RangeTouch.setup('input[type="range"]', {});
 var palettesData;
+var fxdata = [];
 var pJson = {};
 var pN = "", pI = 0, pNum = 0;
 var pmt = 1, pmtLS = 0, pmtLast = 0;
@@ -446,6 +448,34 @@ function loadPresets(callback = null)
 	});
 }
 
+function loadFXData(callback = null)
+{
+	var url = (loc?`http://${locip}`:'') + '/json/fxdata';
+
+	fetch(url, {
+		method: 'get'
+	})
+	.then(res => {
+		if (!res.ok) showErrorToast();
+		return res.json();
+	})
+	.then(json => {
+		clearErrorToast();
+		fxdata = json||[];
+		// add default value for Solid
+		fxdata.shift();
+		fxdata.unshift("@;!;");
+	})
+	.catch(function (error) {
+		fxdata = [];
+		showToast(error, true);
+	})
+	.finally(()=>{
+		if (callback) callback();
+		updateUI();
+	});
+}
+
 var pQL = [];
 
 function populateQL()
@@ -696,7 +726,7 @@ function populatePalettes(palettes)
 		"class": "sticky"
 	});
 	
-	var html = `<div class="searchbar"><input type="text" class="search" placeholder="Search" oninput="search(this)" />
+	var html = `<div id="fxFind" class="searchbar"><input type="text" class="search" placeholder="Search" oninput="search(this)" />
   <i class="icons search-icon">&#xe0a1;</i><i class="icons search-cancel-icon" onclick="cancelSearch(this)">&#xe38f;</i></div>`;
 	for (let i = 0; i < palettes.length; i++) {
 		html += generateListItemHtml(
@@ -780,15 +810,15 @@ function genPalPrevCss(id)
 function generateListItemHtml(listName, id, name, clickAction, extraHtml = '', extraClass = '')
 {
     return `<div class="lstI btn fxbtn ${extraClass}" data-id="${id}" onClick="${clickAction}(${id})">
-			<label class="radio fxchkl">
-				<input type="radio" value="${id}" name="${listName}">
-				<span class="radiomark"></span>
-			</label>
-      <span class="lstIname">
-        ${name}
-      </span>
-      ${extraHtml}
-		</div>`;
+	<label class="radio fxchkl">
+		<input type="radio" value="${id}" name="${listName}">
+		<span class="radiomark"></span>
+	</label>
+	<span class="lstIname">
+		${name}
+	</span>
+	${extraHtml}
+</div>`;
 }
   
 function btype(b){
@@ -936,6 +966,9 @@ function updateUI()
 	d.getElementById('buttonNl').className = (nlA) ? "active":"";
 	d.getElementById('buttonSync').className = (syncSend) ? "active":"";
 
+	updateSelectedPalette();
+	updateSelectedFx();
+
 	updateTrail(d.getElementById('sliderBri'));
 	updateTrail(d.getElementById('sliderSpeed'));
 	updateTrail(d.getElementById('sliderIntensity'));
@@ -945,6 +978,36 @@ function updateUI()
 	updatePA();
 	updateHex();
 	updateRgb();
+}
+
+function updateSelectedPalette()
+{
+	var parent = d.getElementById('pallist');
+	var selPaletteInput = parent.querySelector(`input[name="palette"][value="${selectedPal}"]`);
+	if (selPaletteInput) selPaletteInput.checked = true;
+
+	var selElement = parent.querySelector('.selected');
+	if (selElement) selElement.classList.remove('selected');
+
+	var selectedPalette = parent.querySelector(`.lstI[data-id="${selectedPal}"]`);
+	if (selectedPalette) parent.querySelector(`.lstI[data-id="${selectedPal}"]`).classList.add('selected');
+}
+
+function updateSelectedFx()
+{
+	var parent = d.getElementById('fxlist');
+	var selEffectInput = parent.querySelector(`input[name="fx"][value="${selectedFx}"]`);
+	if (selEffectInput) selEffectInput.checked = true;
+
+	var selElement = parent.querySelector('.selected');
+	if (selElement) selElement.classList.remove('selected');
+
+	var selectedEffect = parent.querySelector(`.lstI[data-id="${selectedFx}"]`);
+	if (selectedEffect) {
+		selectedEffect.classList.add('selected');
+		// WLEDSR: apply the Slider and color control
+		setSliderAndColorControl(selectedFx);
+	}
 }
 
 function displayRover(i,s)
@@ -1027,34 +1090,6 @@ function readState(s,command=false) {
   d.getElementById('sliderSpeed').value = i.sx;
   d.getElementById('sliderIntensity').value = i.ix;
 
-  // Effects
-  var selFx = fxlist.querySelector(`input[name="fx"][value="${i.fx}"]`);
-  if (selFx) selFx.checked = true;
-  else location.reload(); //effect list is gone (e.g. if restoring tab). Reload.
-
-  var selElement = fxlist.querySelector('.selected');
-  if (selElement) {
-    selElement.classList.remove('selected')
-  }
-  var selectedEffect = fxlist.querySelector(`.lstI[data-id="${i.fx}"]`);
-  selectedEffect.classList.add('selected');
-  selectedFx = i.fx;
-
-  // Palettes
-  pallist.querySelector(`input[name="palette"][value="${i.pal}"]`).checked = true;
-  selElement = pallist.querySelector('.selected');
-  if (selElement) {
-    selElement.classList.remove('selected')
-  }
-  pallist.querySelector(`.lstI[data-id="${i.pal}"]`).classList.add('selected');
-
-  if (!command) {
-    selectedEffect.scrollIntoView({
-      behavior: 'smooth',
-      block: 'nearest',
-    });
-  }
-
   if (s.error && s.error != 0) {
     var errstr = "";
     switch (s.error) {
@@ -1073,7 +1108,103 @@ function readState(s,command=false) {
       }
     showToast('Error ' + s.error + ": " + errstr, true);
   }
+  selectedPal = i.pal;
+  selectedFx = i.fx;
   updateUI();
+}
+
+// WLEDSR: control HTML elements for Slider and Color Control
+function setSliderAndColorControl(idx)
+{
+	if (!(Array.isArray(fxdata) && fxdata.length>idx)) return;
+	var topPosition = 0;
+  	var controlDefined = (fxdata[idx].substr(0,1) == "@")?true:false;
+	var extra = fxdata[idx].substr(1);
+	var extras = (extra == '')?[]:extra.split(";");
+	var slOnOff = (extras.length==0 || extras[0]=='')?[]:extras[0].split(",");
+	var coOnOff = (extras.length<2  || extras[1]=='')?[]:extras[1].split(",");
+	var paOnOff = (extras.length<3  || extras[2]=='')?[]:extras[2].split(",");
+  
+	// set html slider items on/off
+	var nSliders = Math.floor((d.getElementById("Effects").children.length - 1) / 2); // p (label) & div for each slider + FX list
+	for (let i=0; i<nSliders; i++) {
+		var slider = d.getElementById("slider" + i);
+		var label = d.getElementById("sliderLabel" + i);
+		// if (not controlDefined and for AC speed or intensity and for SR alle sliders) or slider has a value
+		if ((!controlDefined && i < ((idx<128)?2:nSliders)) || (slOnOff.length>i && slOnOff[i] != "")) {
+			label.style.display = "block";
+			if (slOnOff.length>i && slOnOff[i]!="!") label.innerHTML = slOnOff[i];
+			else if (i==0)                           label.innerHTML = "Effect speed";
+			else if (i==1)                           label.innerHTML = "Effect intensity";
+			else                                     label.innerHTML = "Custom" + (i-1);
+			label.style.top = "auto";
+			slider.style.display = "block";
+			slider.style.top = topPosition + "px";
+			topPosition += 28; // increase top position for the next control
+			slider.setAttribute('title',label.innerHTML);
+		} else {
+			// disable label and slider
+			slider.style.display = "none";
+			label.style.display = "none";
+		}
+	}
+	if (topPosition>0) topPosition += 2;
+  
+	// set top position of the effect list
+	//d.getElementById("fxFind").style.top = topPosition + "px";
+	//topPosition += 42;
+	var fxList = d.getElementById("fxlist");
+	for (var i=0; i<fxList.children.length; i++) fxList.children[i].style.top = null; // remove top
+	var selected = fxList.querySelector('.selected');
+	var sticky = fxList.querySelector('.sticky');
+	if (sticky) {
+		sticky.style.top = topPosition + "px";
+		topPosition += 42;
+	}
+	if (selected && !selected.style.top) { // is the sticky element also selected one?
+		selected.style.top = topPosition + "px";
+	}
+
+	// set html color items on/off
+	var cslLabel = '';
+	var sep = '';
+	for (let i=0; i<d.getElementById("csl").children.length; i++) {
+		var btn = d.getElementById("csl" + i);
+		// if no controlDefined or coOnOff has a value
+		if (coOnOff.length>i && coOnOff[i] != "") {
+			btn.style.display = "inline";
+			if (coOnOff.length>i && coOnOff[i] != "!") {
+				var abbreviation = coOnOff[i].substr(0,2);
+				btn.innerHTML = abbreviation;
+				if (abbreviation != coOnOff[i]) {
+					cslLabel += sep + abbreviation + '=' + coOnOff[i];
+					sep = ', ';
+				}
+			}
+			else if (i==0) btn.innerHTML = "Fx";
+			else if (i==1) btn.innerHTML = "Bg";
+			else btn.innerHTML = "Cs";
+		} else if (!controlDefined /*|| paOnOff.length>0*/) { // if no controls then all buttons should be shown for color 1..3
+			btn.style.display = "inline";
+			btn.innerHTML = `${i+1}`;
+		} else {
+			btn.style.display = "none";
+		}
+	}
+	d.getElementById("cslLabel").innerHTML = cslLabel;
+  
+	// set palette on/off
+	var palw = d.getElementById("palw"); // wrapper
+	var pall = d.getElementById("pall");	// list
+	// if not controlDefined or palette has a value
+	if ((!controlDefined) || (paOnOff.length>0 && paOnOff[0]!="")) {
+		palw.style.display = "inline-block";
+		if (paOnOff.length>0 && paOnOff[0] != "!") pall.innerHTML = paOnOff[0];
+		else                                       pall.innerHTML = '<i class="icons sel-icon" onclick="tglHex()">&#xe2b3;</i> Color palette';
+	} else {
+		// disable label and slider
+		palw.style.display = "none";
+	}
 }
 
 var jsonTimeout;
@@ -1143,7 +1274,7 @@ function requestJson(command, rinfo = true) {
 			if (!rinfo) { //entire JSON (on load)
 				populateEffects(json.effects);
 				populatePalettes(json.palettes);
-
+				loadFXData();
 				//load palette previews, presets, and open websocket sequentially
 				setTimeout(function(){
 					loadPresets(function(){

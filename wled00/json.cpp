@@ -784,6 +784,113 @@ void serializeNodes(JsonObject root)
   }
 }
 
+void serializeModeData(JsonArray fxdata)
+{
+  //JsonArray fxdata = root.createNestedArray("fxdata");
+  String lineBuffer;
+  bool insideQuotes = false;
+  char singleJsonSymbol;
+  size_t len = strlen_P(JSON_mode_names);
+
+  // Find the mode name in JSON
+  for (size_t i = 0; i < len; i++) {
+    singleJsonSymbol = pgm_read_byte_near(JSON_mode_names + i);
+    if (singleJsonSymbol == '\0') break;
+    switch (singleJsonSymbol) {
+      case '"':
+        insideQuotes = !insideQuotes;
+        break;
+      case '[':
+        if (insideQuotes) lineBuffer += singleJsonSymbol;
+        break;
+      case ']':
+        if (insideQuotes) {lineBuffer += singleJsonSymbol; break;}
+      case ',':
+        if (insideQuotes) {lineBuffer += singleJsonSymbol; break;}
+        if (lineBuffer.length() > 0) {
+          uint8_t endPos = lineBuffer.indexOf('@');
+          if (endPos>0) fxdata.add(lineBuffer.substring(endPos));
+          else          fxdata.add("");
+          lineBuffer.clear();
+        }
+        break;
+      default:
+        if (!insideQuotes) break;
+        lineBuffer += singleJsonSymbol;
+    }
+  }
+}
+
+// deserializes mode names string into JsonArray
+// also removes WLED-SR extensions (@...) from deserialised names
+void serializeModeNames(JsonArray arr, const char *qstring) {
+  String lineBuffer;
+  bool insideQuotes = false;
+  char singleJsonSymbol;
+  size_t len = strlen_P(qstring);
+
+  // Find the mode name in JSON
+  for (size_t i = 0; i < len; i++) {
+    singleJsonSymbol = pgm_read_byte_near(qstring + i);
+    if (singleJsonSymbol == '\0') break;
+    switch (singleJsonSymbol) {
+      case '"':
+        insideQuotes = !insideQuotes;
+        break;
+      case '[':
+        break;
+      case ']':
+      case ',':
+        if (insideQuotes) break;
+        if (lineBuffer.length() > 0) {
+          uint8_t endPos = lineBuffer.indexOf('@');
+          if (endPos>0) arr.add(lineBuffer.substring(0,endPos));
+          else          arr.add(lineBuffer);
+          lineBuffer.clear();
+        }
+        break;
+      default:
+        if (!insideQuotes) break;
+        lineBuffer += singleJsonSymbol;
+    }
+  }
+}
+
+// extracts effect mode (or palette) name from names serialized string
+// caller must provide large enough buffer!
+uint8_t extractModeName(uint8_t mode, const char *src, char *dest, uint8_t maxLen)
+{
+  uint8_t qComma = 0;
+  bool insideQuotes = false;
+  uint8_t printedChars = 0;
+  char singleJsonSymbol;
+  size_t len = strlen_P(src);
+
+  // Find the mode name in JSON
+  for (size_t i = 0; i < len; i++) {
+    singleJsonSymbol = pgm_read_byte_near(src + i);
+    if (singleJsonSymbol == '\0') break;
+    switch (singleJsonSymbol) {
+      case '"':
+        insideQuotes = !insideQuotes;
+        break;
+      case '[':
+      case ']':
+        break;
+      case ',':
+        if (!insideQuotes) qComma++;
+      default:
+        if (!insideQuotes || (qComma != mode)) break;
+        dest[printedChars++] = singleJsonSymbol;
+    }
+    if ((qComma > mode) || (printedChars >= maxLen)) break;
+  }
+  dest[printedChars] = '\0';
+  char *pos = strchr(dest,'@');
+  if (pos) *pos = '\0';
+  return strlen(dest);
+}
+
 void serveJson(AsyncWebServerRequest* request)
 {
   byte subJson = 0;
@@ -793,12 +900,21 @@ void serveJson(AsyncWebServerRequest* request)
   else if (url.indexOf("si")    > 0) subJson = 3;
   else if (url.indexOf("nodes") > 0) subJson = 4;
   else if (url.indexOf("palx")  > 0) subJson = 5;
+  else if (url.indexOf("fxda")  > 0) subJson = 6;
   else if (url.indexOf("live")  > 0) {
     serveLiveLeds(request);
     return;
   }
   else if (url.indexOf(F("eff")) > 0) {
+    // this is going to serve raw effect names which will include WLED-SR extensions in names
     request->send_P(200, "application/json", JSON_mode_names);
+    // if we want parsed effect names use this (warning, this will prevent UI from receiving this extension making it useless)
+    //AsyncJsonResponse* response = new AsyncJsonResponse(JSON_BUFFER_SIZE, true);  // array document
+    //JsonArray doc = response->getRoot();
+    //deserializeModeNames(doc, JSON_mode_names); // remove WLED-SR extensions from effect names
+    //response->setLength();
+    //request->send(response);
+    //delete response;
     return;
   }
   else if (url.indexOf("pal") > 0) {
@@ -813,8 +929,8 @@ void serveJson(AsyncWebServerRequest* request)
     return;
   }
 
-  AsyncJsonResponse* response = new AsyncJsonResponse(JSON_BUFFER_SIZE);
-  JsonObject doc = response->getRoot();
+  AsyncJsonResponse* response = new AsyncJsonResponse(JSON_BUFFER_SIZE, subJson==6);
+  JsonVariant doc = response->getRoot();
 
   switch (subJson)
   {
@@ -826,6 +942,8 @@ void serveJson(AsyncWebServerRequest* request)
       serializeNodes(doc); break;
     case 5: //palettes
       serializePalettes(doc, request); break;
+    case 6: // FX helper data
+      serializeModeData(doc.as<JsonArray>()); break;
     default: //all
       JsonObject state = doc.createNestedObject("state");
       serializeState(state);
@@ -833,7 +951,9 @@ void serveJson(AsyncWebServerRequest* request)
       serializeInfo(info);
       if (subJson != 3)
       {
-        doc[F("effects")]  = serialized((const __FlashStringHelper*)JSON_mode_names);
+        //doc[F("effects")]  = serialized((const __FlashStringHelper*)JSON_mode_names);
+        JsonArray effects = doc.createNestedArray(F("effects"));
+        serializeModeNames(effects, JSON_mode_names); // remove WLED-SR extensions from effect names
         doc[F("palettes")] = serialized((const __FlashStringHelper*)JSON_palette_names);
       }
   }

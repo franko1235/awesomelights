@@ -80,19 +80,20 @@
 			<div class="qcs" onclick="pC('rnd');" title="Random" style="background-color:var(--c-3); padding: 4px 8px; transform: translateY(-10px);">R</div>
 		</div>
 		<div id="csl">
-			<button class="xxs cl btn" onclick="selectSlot(0);">1</button>
-			<button class="xxs cl btn" onclick="selectSlot(1);">2</button>
-			<button class="xxs cl btn" onclick="selectSlot(2);">3</button>
+			<button id="csl0" class="xxs cl btn" onclick="selectSlot(0);">1</button>
+			<button id="csl1" class="xxs cl btn" onclick="selectSlot(1);">2</button>
+			<button id="csl2" class="xxs cl btn" onclick="selectSlot(2);">3</button>
 		</div>
+		<p class="labels h" id="cslLabel"></p>
 		<div id="hexw">
 			<input id="hexc" type="text" class="noslide" onkeydown="hexEnter(this)" autocomplete="off" maxlength="8" />
 			<button id="hexcnf" class="xxs btn" onclick="fromHex();"><i class="icons btna-icon">&#xe390;</i></button>
 		</div>
-		<p class="labels">
-			<i class="icons sel-icon" onclick="tglHex()">&#xe2b3;</i>
-			Color palette
-		</p>
-		<div class="il">
+		<div id="palw" class="il">
+			<p class="labels">
+				<i class="icons sel-icon" onclick="tglHex()">&#xe2b3;</i>
+				Color palette
+			</p>
 			<div id="pallist" class="list">
 				<div class="lstI" data-id="0">
 					<label class="check schkl">
@@ -119,8 +120,8 @@
 	</div>
 
 	<div id="Effects" class="tabcontent">
-		<p class="labels">Effect speed</p>
-		<div class="staytop">
+		<p id="sliderLabel0" class="labels">Effect speed</p>
+		<div class="staytop" id="slider0">
 			<i class="icons slider-icon">&#xe325;</i>
 			<div class="sliderwrap il">
 				<input id="sliderSpeed" class="noslide" onchange="setSpeed()" oninput="updateTrail(this)" max="255" min="0" type="range" value="128" />
@@ -128,8 +129,8 @@
 				<div class="sliderdisplay"></div>
 			</div>
 		</div>
-		<p class="labels">Effect intensity</p>
-		<div class="staytop" id="staytop1">
+		<p id="sliderLabel1" class="labels">Effect intensity</p>
+		<div class="staytop" id="slider1">
 			<i class="icons slider-icon" onclick="tglLabels()">&#xe409;</i>
 			<div class="sliderwrap il">
 				<input id="sliderIntensity" class="noslide" onchange="setIntensity()" oninput="updateTrail(this)" max="255" min="0" type="range" value="128" />

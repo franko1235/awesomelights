@@ -3,12 +3,12 @@
 /*
    Main sketch, global variable declarations
    @title WLED project sketch
-   @version 0.13.0-b5
+   @version 0.13.0-b6
    @author Christian Schwinne
  */
 
 // version code in format yymmddb (b = daily build)
-#define VERSION 2111220
+#define VERSION 2201280
 
 //uncomment this if you have a "my_config.h" file you'd like to use
 //#define WLED_USE_MY_CONFIG
@@ -16,6 +16,7 @@
 // ESP8266-01 (blue) got too little storage space to work with WLED. 0.10.2 is the last release supporting this unit.
 
 // ESP8266-01 (black) has 1MB flash and can thus fit the whole program, although OTA update is not possible. Use 1M(128K SPIFFS).
+// 2-step OTA may still be possible: https://github.com/Aircoookie/WLED/issues/2040#issuecomment-981111096
 // Uncomment some of the following lines to disable features:
 // Alternatively, with platformio pass your chosen flags to your custom build target in platformio_override.ini
 
@@ -31,8 +32,9 @@
 #ifndef WLED_DISABLE_MQTT
   #define WLED_ENABLE_MQTT         // saves 12kb
 #endif
-#define WLED_ENABLE_ADALIGHT       // saves 500b only
+#define WLED_ENABLE_ADALIGHT     // saves 500b only (uses GPIO3 (RX) for serial)
 //#define WLED_ENABLE_DMX          // uses 3.5kb (use LEDPIN other than 2)
+//#define WLED_ENABLE_JSONLIVE     // peek LED output via /json/live (WS binary peek is always enabled)
 #ifndef WLED_DISABLE_LOXONE
   #define WLED_ENABLE_LOXONE       // uses 1.2kb
 #endif
@@ -69,11 +71,14 @@
   #include "esp_wifi.h"
   #include <ESPmDNS.h>
   #include <AsyncTCP.h>
-  //#include "SPIFFS.h"
-  #ifndef CONFIG_LITTLEFS_FOR_IDF_3_2
-    #define CONFIG_LITTLEFS_FOR_IDF_3_2
+  #if LOROL_LITTLEFS
+    #ifndef CONFIG_LITTLEFS_FOR_IDF_3_2
+      #define CONFIG_LITTLEFS_FOR_IDF_3_2
+    #endif
+    #include <LITTLEFS.h>
+  #else
+    #include <LittleFS.h>
   #endif
-  #include <LITTLEFS.h>
 #endif
 
 #include "src/dependencies/network/Network.h"
@@ -172,7 +177,11 @@ using PSRAMDynamicJsonDocument = BasicJsonDocument<PSRAM_Allocator>;
 #ifdef ESP8266
   #define WLED_FS LittleFS
 #else
-  #define WLED_FS LITTLEFS
+  #if LOROL_LITTLEFS
+    #define WLED_FS LITTLEFS
+  #else
+    #define WLED_FS LittleFS
+  #endif
 #endif
 
 // GLOBAL VARIABLES
@@ -269,6 +278,8 @@ WLED_GLOBAL byte bootPreset   _INIT(0);                   // save preset to load
 //if false, only one segment spanning the total LEDs is created,
 //but not on LED settings save if there is more than one segment currently
 WLED_GLOBAL bool autoSegments _INIT(false);
+WLED_GLOBAL bool correctWB _INIT(false); //CCT color correction of RGB color
+WLED_GLOBAL bool cctFromRgb _INIT(false); //CCT is calculated from RGB instead of using seg.cct
 
 WLED_GLOBAL byte col[]    _INIT_N(({ 255, 160, 0, 0 }));  // current RGB(W) primary color. col[] should be updated if you want to change the color.
 WLED_GLOBAL byte colSec[] _INIT_N(({ 0, 0, 0, 0 }));      // current RGB(W) secondary color
@@ -303,6 +314,7 @@ WLED_GLOBAL uint8_t receiveGroups _INIT(0x01);                    // sync receiv
 WLED_GLOBAL bool receiveNotificationBrightness _INIT(true);       // apply brightness from incoming notifications
 WLED_GLOBAL bool receiveNotificationColor      _INIT(true);       // apply color
 WLED_GLOBAL bool receiveNotificationEffects    _INIT(true);       // apply effects setup
+WLED_GLOBAL bool receiveSegmentOptions         _INIT(false);      // apply segment options
 WLED_GLOBAL bool notifyDirect _INIT(false);                       // send notification if change via UI or HTTP API
 WLED_GLOBAL bool notifyButton _INIT(false);                       // send if updated by button or infrared remote
 WLED_GLOBAL bool notifyAlexa  _INIT(false);                       // send notification if updated via Alexa
@@ -358,11 +370,13 @@ WLED_GLOBAL bool hueApplyBri _INIT(true);
 WLED_GLOBAL bool hueApplyColor _INIT(true);
 #endif
 
+WLED_GLOBAL uint16_t serialBaud _INIT(1152); // serial baud rate, multiply by 100
+
 // Time CONFIG
-WLED_GLOBAL bool ntpEnabled _INIT(false);         // get internet time. Only required if you use clock overlays or time-activated macros
-WLED_GLOBAL bool useAMPM _INIT(false);            // 12h/24h clock format
-WLED_GLOBAL byte currentTimezone _INIT(0);        // Timezone ID. Refer to timezones array in wled10_ntp.ino
-WLED_GLOBAL int utcOffsetSecs _INIT(0);           // Seconds to offset from UTC before timzone calculation
+WLED_GLOBAL bool ntpEnabled _INIT(false);    // get internet time. Only required if you use clock overlays or time-activated macros
+WLED_GLOBAL bool useAMPM _INIT(false);       // 12h/24h clock format
+WLED_GLOBAL byte currentTimezone _INIT(0);   // Timezone ID. Refer to timezones array in wled10_ntp.ino
+WLED_GLOBAL int utcOffsetSecs _INIT(0);      // Seconds to offset from UTC before timzone calculation
 
 WLED_GLOBAL byte overlayDefault _INIT(0);                               // 0: no overlay 1: analog clock 2: single-digit clock 3: cronixie
 WLED_GLOBAL byte overlayMin _INIT(0), overlayMax _INIT(DEFAULT_LED_COUNT - 1);   // boundaries of overlay mode
@@ -414,9 +428,6 @@ WLED_GLOBAL bool interfacesInited _INIT(false);
 WLED_GLOBAL bool wasConnected _INIT(false);
 
 // color
-WLED_GLOBAL byte colIT[]     _INIT_N(({ 0, 0, 0, 0 }));         // color that was last sent to LEDs
-WLED_GLOBAL byte colSecIT[]  _INIT_N(({ 0, 0, 0, 0 }));
-
 WLED_GLOBAL byte lastRandomIndex _INIT(0);        // used to save last random color so the new one is not the same
 
 // transitions
@@ -467,6 +478,7 @@ WLED_GLOBAL byte effectSpeed _INIT(128);
 WLED_GLOBAL byte effectIntensity _INIT(128);
 WLED_GLOBAL byte effectPalette _INIT(0);
 WLED_GLOBAL bool effectChanged _INIT(false);
+WLED_GLOBAL bool colorChanged _INIT(false);
 
 // network
 WLED_GLOBAL bool udpConnected _INIT(false), udp2Connected _INIT(false), udpRgbConnected _INIT(false);
@@ -495,13 +507,17 @@ WLED_GLOBAL byte dP[] _INIT_N(({ 255, 255, 255, 255, 255, 255 }));
 WLED_GLOBAL unsigned long countdownTime _INIT(1514764800L);
 WLED_GLOBAL bool countdownOverTriggered _INIT(true);
 
-// timer
-WLED_GLOBAL byte lastTimerMinute _INIT(0);
-WLED_GLOBAL byte timerHours[] _INIT_N(({ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }));
+//timer
+WLED_GLOBAL byte lastTimerMinute  _INIT(0);
+WLED_GLOBAL byte timerHours[]     _INIT_N(({ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }));
 WLED_GLOBAL int8_t timerMinutes[] _INIT_N(({ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }));
-WLED_GLOBAL byte timerMacro[] _INIT_N(({ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }));
-WLED_GLOBAL byte timerWeekday[] _INIT_N(({ 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 }));        // weekdays to activate on
-// bit pattern of arr elem: 0b11111111: sun,sat,fri,thu,wed,tue,mon,validity
+WLED_GLOBAL byte timerMacro[]     _INIT_N(({ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }));
+//weekdays to activate on, bit pattern of arr elem: 0b11111111: sun,sat,fri,thu,wed,tue,mon,validity
+WLED_GLOBAL byte timerWeekday[]   _INIT_N(({ 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 }));
+//upper 4 bits start, lower 4 bits end month (default 28: start month 1 and end month 12)
+WLED_GLOBAL byte timerMonth[]     _INIT_N(({28,28,28,28,28,28,28,28}));
+WLED_GLOBAL byte timerDay[]       _INIT_N(({1,1,1,1,1,1,1,1}));
+WLED_GLOBAL byte timerDayEnd[]		_INIT_N(({31,31,31,31,31,31,31,31}));
 
 // blynk
 WLED_GLOBAL bool blynkEnabled _INIT(false);
@@ -511,7 +527,6 @@ WLED_GLOBAL byte improvActive _INIT(0); //0: no improv packet received, 1: impro
 WLED_GLOBAL byte improvError _INIT(0);
 
 //playlists
-WLED_GLOBAL unsigned long presetCycledTime _INIT(0);
 WLED_GLOBAL int16_t currentPlaylist _INIT(-1);
 //still used for "PL=~" HTTP API command
 WLED_GLOBAL byte presetCycCurr _INIT(0);
@@ -521,7 +536,7 @@ WLED_GLOBAL byte presetCycMax _INIT(5);
 // realtime
 WLED_GLOBAL byte realtimeMode _INIT(REALTIME_MODE_INACTIVE);
 WLED_GLOBAL byte realtimeOverride _INIT(REALTIME_OVERRIDE_NONE);
-WLED_GLOBAL IPAddress realtimeIP _INIT_N(((0, 0, 0, 0)));;
+WLED_GLOBAL IPAddress realtimeIP _INIT_N(((0, 0, 0, 0)));
 WLED_GLOBAL unsigned long realtimeTimeout _INIT(0);
 WLED_GLOBAL uint8_t tpmPacketCount _INIT(0);
 WLED_GLOBAL uint16_t tpmPayloadFrameSize _INIT(0);
@@ -598,9 +613,16 @@ WLED_GLOBAL BusManager busses _INIT(BusManager());
 WLED_GLOBAL WS2812FX strip _INIT(WS2812FX());
 WLED_GLOBAL BusConfig* busConfigs[WLED_MAX_BUSSES] _INIT({nullptr}); //temporary, to remember values from network callback until after
 WLED_GLOBAL bool doInitBusses _INIT(false);
+WLED_GLOBAL int8_t loadLedmap _INIT(-1);
 
 // Usermod manager
 WLED_GLOBAL UsermodManager usermods _INIT(UsermodManager());
+
+#ifndef WLED_USE_DYNAMIC_JSON
+// global ArduinoJson buffer
+WLED_GLOBAL StaticJsonDocument<JSON_BUFFER_SIZE> doc;
+#endif
+WLED_GLOBAL volatile uint8_t jsonBufferLock _INIT(0);
 
 // enable additional debug output
 #ifdef WLED_DEBUG
@@ -641,6 +663,13 @@ WLED_GLOBAL UsermodManager usermods _INIT(UsermodManager());
 #endif
 #define WLED_WIFI_CONFIGURED (strlen(clientSSID) >= 1 && strcmp(clientSSID, DEFAULT_CLIENT_SSID) != 0)
 #define WLED_MQTT_CONNECTED (mqtt != nullptr && mqtt->connected())
+
+//color mangling macros
+#define RGBW32(r,g,b,w) (uint32_t((byte(w) << 24) | (byte(r) << 16) | (byte(g) << 8) | (byte(b))))
+#define R(c) (byte((c) >> 16))
+#define G(c) (byte((c) >> 8))
+#define B(c) (byte(c))
+#define W(c) (byte((c) >> 24))
 
 // append new c string to temp buffer efficiently
 bool oappend(const char* txt);

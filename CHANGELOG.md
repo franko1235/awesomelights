@@ -2,6 +2,36 @@
 
 ### Builds after release 0.12.0
 
+#### Build 2201260
+
+-   Initial ESP32-C3 and ESP32-S2 support (PRs #2452, )
+-   Full segment sync (PR #2427)
+-   Allow overriding of color order by ranges (PR #2463) 
+-   Added white channel to Peek
+
+#### Build 2112080
+
+-		Version bump to 0.13.0-b6 "Toki"
+-		Added "ESP02" (ESP8266 with 2M of flash) to PIO/release binaries
+
+#### Build 2112070
+
+-		Added new effect "Fairy", replacing "Police All"
+-		Added new effect "Fairytwinkle", replacing "Two Areas"
+-		Static single JSON buffer (performance and stability improvement) (PR #2336)
+
+#### Build 2112030
+
+-		Fixed ESP32 crash on Colortwinkles brightness change
+-		Fixed setting picker to black resetting hue and saturation
+-		Fixed auto white mode not saved to config
+
+#### Build 2111300
+
+-		Added CCT and white balance correction support (PR #2285)
+-		Unified UI slider style
+-		Added LED settings config template upload
+
 #### Build 2111220
 
 -   Fixed preset cycle not working from preset called by UI
